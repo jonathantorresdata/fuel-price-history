@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fuel Price History</title>
+<meta name="description" content="When is electricity cheapest in Spain, and why? Daily data pipeline over Red Eléctrica and Open-Meteo.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a newspaper-style "today" strip on top, then one chart per question, full width. */
+:root {
+  --bg: #f6f5f1; --surface: #ffffff; --fg: #17191c; --muted: #5d6470; --line: #e2e0d8;
+  --cheap: #138a72; --pricey: #c4472f; --sun: #d9971a; --wind: #2f6fb0; --gas: #7a7f89;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #111316; --surface: #1a1d22; --fg: #eceae4; --muted: #9aa1ab; --line: #2b3038;
+  --cheap: #3cc4a4; --pricey: #ef7a5f; --sun: #f2b64a; --wind: #6aa6e8; --gas: #9aa1ab; color-scheme: dark } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--body); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px max(16px, env(safe-area-inset-right)) 64px max(16px, env(safe-area-inset-left)); display: grid; gap: 28px; }
+h1, h2 { font-family: var(--display); margin: 0; line-height: 1.12; text-wrap: balance; }
+h1 { font-size: clamp(34px, 6vw, 58px); }
+h2 { font-size: 24px; }
+p { margin: 0; max-width: 70ch; }
+.kicker { font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.lead { font-size: 19px; color: var(--muted); }
+.today { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 4px; }
+.stat b { font: 700 32px var(--display); font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 14px; }
+.cheap { color: var(--cheap); } .pricey { color: var(--pricey); }
+section { display: grid; gap: 12px; }
+.chart { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; height: 360px; position: relative; }
+.note { color: var(--muted); font-size: 14px; }
+footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 14px; display: grid; gap: 6px; }
+a { color: var(--wind); }
+code { font-family: var(--mono); font-size: 13px; }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header style="display:grid;gap:12px">
+    <span class="kicker">Fuel Price History · every petrol station in Spain, every day</span>
+    <h1>Which day is cheapest to fill up in Spain? (It is the wrong question.)</h1>
+    <p class="lead" id="lead"></p>
+  </header>
+  <div class="today" id="today"></div>
+  <section>
+    <h2>Price by day of the week</h2>
+    <p class="note">Each day's national average compared with the centred 7-day average around it (so a rising or falling market does not bias it), in € per 1,000 litres. Below zero = cheaper than the trend.</p>
+    <div class="chart"><canvas id="c-week"></canvas></div>
+  </section>
+  <section>
+    <h2>How often prices change</h2>
+    <p class="note">Share of stations that changed a price compared with the previous day, from the change data capture model.</p>
+    <div class="chart"><canvas id="c-changes"></canvas></div>
+  </section>
+  <section>
+    <h2>Cheapest brands today (diesel)</h2>
+    <p class="note">Average diesel price per brand with at least 100 stations, latest day.</p>
+    <div class="chart" style="height:460px"><canvas id="c-brands"></canvas></div>
+  </section>
+  <footer>
+    <span id="span"></span>
+    <span>Pipeline: daily extraction (idempotent, one gzip file per day) → DuckDB + dbt: SCD type 2 price history and change data capture, with tests → this page. <a href="https://github.com/jonathantorresdata/fuel-price-history">Source code</a>.</span>
+    <span>Data: Ministerio para la Transición Ecológica y el Reto Demográfico, Geoportal de gasolineras.</span>
+  </footer>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const D = __DATA__;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { cheap: css('--cheap'), pricey: css('--pricey'), sun: css('--sun'), wind: css('--wind'), gas: css('--gas') };
+Chart.defaults.color = css('--muted'); Chart.defaults.borderColor = css('--line'); Chart.defaults.maintainAspectRatio = false;
+const nf = (v, d = 0) => Number(v).toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
+const wk = [...D.weekday].sort((a, b) => a.gasoline - b.gasoline), best = wk[0], worst = wk[wk.length - 1];
+const cheapBrand = D.brands[0], dearBrand = D.brands[D.brands.length - 1];
+const avgPct = D.changes.length ? D.changes.reduce((s, c) => s + c.pct, 0) / D.changes.length : 0;
+const dayGap = worst.gasoline - best.gasoline, brandGap = 1000 * (dearBrand.diesel - cheapBrand.diesel);
+document.getElementById('lead').textContent = `Over ${D.span.days} days, the best and worst weekday for 95 petrol were ${nf(dayGap, 0)} € apart per 1,000 litres (about ${nf(dayGap / 10, 1)} cents a litre); for diesel the day barely matters. The brand does: ${nf(brandGap)} € per 1,000 litres between the cheapest and the most expensive brand today, about ${Math.round(brandGap / dayGap)} times more.`;
+const stats = [[nf(dayGap / 10, 1) + ' c/L', `best vs worst weekday (95 petrol: ${best.day_name} vs ${worst.day_name})`, ''], [nf(brandGap / 10, 1) + ' c/L', `cheapest vs dearest brand (diesel: ${cheapBrand.brand} vs ${dearBrand.brand})`, 'pricey'],
+  [nf(avgPct, 1) + '%', 'of stations change a price on a typical day', ''], [nf(D.scd.versions), `price versions kept (SCD2) for ${nf(D.scd.stations)} stations`, '']];
+document.getElementById('today').innerHTML = stats.map(([v, l, c]) => `<div class="stat"><b class="${c}">${v}</b><span>${l}</span></div>`).join('');
+new Chart(document.getElementById('c-week'), { type: 'bar',
+  data: { labels: D.weekday.map(d => d.day_name), datasets: [
+    { label: 'diesel', data: D.weekday.map(d => d.diesel), backgroundColor: C.wind },
+    { label: 'petrol 95', data: D.weekday.map(d => d.gasoline), backgroundColor: C.sun }] },
+  options: { scales: { y: { title: { display: true, text: '€ per 1,000 L vs 7-day trend' } } } } });
+new Chart(document.getElementById('c-changes'), { type: 'line',
+  data: { labels: D.changes.map(c => c.day), datasets: [{ label: '% stations changing', data: D.changes.map(c => c.pct), borderColor: C.pricey, backgroundColor: C.pricey, pointRadius: 0, tension: .25, borderWidth: 2.5 }] },
+  options: { plugins: { legend: { display: false } }, scales: { y: { min: 0, title: { display: true, text: '%' } } } } });
+new Chart(document.getElementById('c-brands'), { type: 'bar',
+  data: { labels: D.brands.map(b => `${b.brand} (${b.stations})`), datasets: [{ label: 'diesel €/L', data: D.brands.map(b => b.diesel), backgroundColor: D.brands.map((b, i) => i < 3 ? C.cheap : C.gas) }] },
+  options: { indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { min: Math.floor(10 * Math.min(...D.brands.map(b => b.diesel))) / 10 } } } });
+document.getElementById('span').textContent = `Data from ${D.span.first} to ${D.span.last} (${D.span.days} days). Built ${D.built_at}.`;
+</script>
+</body>
+</html>
