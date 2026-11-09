@@ -1,0 +1,33 @@
+version: 2
+
+models:
+  - name: prices_daily
+    description: One row per station and day.
+    tests:
+      - unique_combination: { arguments: { columns: [station_id, price_date] } }
+    columns:
+      - name: price_diesel
+        tests:
+          - between: { arguments: { min_value: 0.5, max_value: 3.5 } }
+      - name: price_gasoline_95
+        tests:
+          - between: { arguments: { min_value: 0.5, max_value: 3.5 } }
+
+  - name: price_history_scd2
+    description: SCD type 2 price history, one row per station and price spell.
+    tests:
+      - unique_combination: { arguments: { columns: [station_id, valid_from] } }
+
+  - name: cdc_events
+    description: Inserts, deletes and price updates between consecutive days.
+    columns:
+      - name: change_type
+        tests:
+          - accepted_values: { arguments: { values: [insert, delete, update] } }
+    tests:
+      - unique_combination: { arguments: { columns: [station_id, change_date] } }
+
+  - name: weekday_effect
+    columns:
+      - name: day_of_week
+        tests: [unique, not_null]

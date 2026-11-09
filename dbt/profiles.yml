@@ -1,0 +1,7 @@
+fuelprices:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      path: "{{ env_var('FUEL_DB', '../data/fuelprices.duckdb') }}"
+      threads: 4
